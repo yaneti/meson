@@ -364,7 +364,7 @@ class BuildTarget(Target):
         # 1. Pre-existing objects provided by the user with the `objects:` kwarg
         # 2. Compiled objects created by and extracted from another target
         self.process_objectlist(objects)
-        self.process_compilers()
+        self.process_compilers(extract_as_list(kwargs, 'dependencies'))
         self.process_kwargs(kwargs, environment)
         self.check_unknown_kwargs(kwargs)
         if not any([self.sources, self.generated, self.objects, self.link_whole]):
@@ -474,7 +474,21 @@ class BuildTarget(Target):
                     self.compilers[lang] = compilers[lang]
                     break
 
-    def process_compilers(self):
+    def cyclic_dep_breaker_for_depsources(self, external_dependencies):
+        result = []
+        # We need to have external dependencies here because they may contain
+        # sources but we can only process kwargs _after_ this function is
+        # done because D requires code from this. The correct solution would
+        # be to fix D compiler to not need this.
+        for d in external_dependencies:
+            if hasattr(d, 'held_object'):
+                d = d.held_object
+            for s in d.sources:
+                if isinstance(s, (str, File)):
+                    result.append(s)
+        return result
+
+    def process_compilers(self, external_dependencies):
         '''
         Populate self.compilers, which is the list of compilers that this
         target will use for compiling all its sources.
@@ -499,6 +513,7 @@ class BuildTarget(Target):
                 # which is what we need.
                 if not is_object(s):
                     sources.append(s)
+        sources += self.cyclic_dep_breaker_for_depsources(external_dependencies)
         # Sources that were used to create our extracted objects
         for o in self.objects:
             if not isinstance(o, ExtractedObjects):
